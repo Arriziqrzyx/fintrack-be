@@ -78,7 +78,7 @@ const getMonthlyTrends = async (userId, startDate, endDate) => {
     {
       $group: {
         _id: {
-          month: { $month: '$transactionDate' },
+          month: { $month: { date: '$transactionDate', timezone: 'Asia/Jakarta' } },
           type: '$type'
         },
         total: { $sum: '$amount' }

@@ -1,11 +1,36 @@
 const reportRepository = require('../repositories/reportRepository');
 
+const getJakartaMonthRange = (year, month) => {
+  const startDateStr = `${year}-${String(month).padStart(2, '0')}-01T00:00:00.000+07:00`;
+  const startDate = new Date(startDateStr);
+  
+  let nextMonth = month + 1;
+  let nextYear = year;
+  if (nextMonth > 12) {
+    nextMonth = 1;
+    nextYear++;
+  }
+  const endDateStr = `${nextYear}-${String(nextMonth).padStart(2, '0')}-01T00:00:00.000+07:00`;
+  const endDate = new Date(new Date(endDateStr).getTime() - 1);
+  
+  return { startDate, endDate };
+};
+
+const getJakartaYearRange = (year) => {
+  const startDateStr = `${year}-01-01T00:00:00.000+07:00`;
+  const startDate = new Date(startDateStr);
+  
+  const endDateStr = `${year + 1}-01-01T00:00:00.000+07:00`;
+  const endDate = new Date(new Date(endDateStr).getTime() - 1);
+  
+  return { startDate, endDate };
+};
+
 const getMonthlyReport = async (userId, year, month) => {
   const targetYear = year ? parseInt(year) : new Date().getFullYear();
   const targetMonth = month ? parseInt(month) : new Date().getMonth() + 1;
   
-  const startDate = new Date(targetYear, targetMonth - 1, 1);
-  const endDate = new Date(targetYear, targetMonth, 0, 23, 59, 59, 999);
+  const { startDate, endDate } = getJakartaMonthRange(targetYear, targetMonth);
 
   const summaryAgg = await reportRepository.getMonthlySummary(userId, startDate, endDate);
   
@@ -32,8 +57,7 @@ const getMonthlyReport = async (userId, year, month) => {
 
 const getYearlyReport = async (userId, year) => {
   const targetYear = year ? parseInt(year) : new Date().getFullYear();
-  const startDate = new Date(targetYear, 0, 1);
-  const endDate = new Date(targetYear, 11, 31, 23, 59, 59, 999);
+  const { startDate, endDate } = getJakartaYearRange(targetYear);
 
   const monthlyTrends = await reportRepository.getMonthlyTrends(userId, startDate, endDate);
 
