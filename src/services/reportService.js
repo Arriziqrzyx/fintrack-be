@@ -1,4 +1,5 @@
 const reportRepository = require('../repositories/reportRepository');
+const salaryCycleService = require('./salaryCycleService');
 
 const getJakartaMonthRange = (year, month) => {
   const startDateStr = `${year}-${String(month).padStart(2, '0')}-01T00:00:00.000+07:00`;
@@ -92,7 +93,43 @@ const getYearlyReport = async (userId, year) => {
   };
 };
 
+const getCycleReport = async (userId, cycleId) => {
+  const cycle = await salaryCycleService.getCycleById(cycleId, userId);
+  if (!cycle) throw new Error('Cycle not found');
+
+  const startDate = cycle.startDate;
+  const endDate = cycle.endDate || new Date(9999, 11, 31); // far future if active
+
+  const summaryAgg = await reportRepository.getMonthlySummary(userId, startDate, endDate);
+  
+  let totalIncome = 0;
+  let totalExpense = 0;
+  
+  summaryAgg.forEach(item => {
+    if (item._id === 'INCOME') totalIncome = item.total;
+    if (item._id === 'EXPENSE') totalExpense = item.total;
+  });
+
+  const categoryBreakdown = await reportRepository.getCategoryBreakdown(userId, startDate, endDate);
+
+  return {
+    cycle: {
+      id: cycle._id,
+      name: cycle.name,
+      startDate: cycle.startDate,
+      endDate: cycle.endDate
+    },
+    summary: {
+      totalIncome,
+      totalExpense,
+      netBalance: totalIncome - totalExpense
+    },
+    expenseByCategory: categoryBreakdown
+  };
+};
+
 module.exports = {
   getMonthlyReport,
-  getYearlyReport
+  getYearlyReport,
+  getCycleReport
 };

@@ -2,6 +2,7 @@ const dashboardRepository = require('../repositories/dashboardRepository');
 const exchangeRateService = require('./exchangeRateService');
 const accountService = require('./accountService');
 const fundService = require('./fundService');
+const salaryCycleService = require('./salaryCycleService');
 const mongoose = require('mongoose');
 
 const { isLiquidAccount } = require('../utils/accountUtils');
@@ -15,7 +16,20 @@ const getCurrentMonthDates = () => {
 
 const getSummary = async (userId) => {
   const userObjectId = new mongoose.Types.ObjectId(userId);
-  const { startOfMonth, endOfMonth } = getCurrentMonthDates();
+  
+  // Get active cycle
+  const activeCycle = await salaryCycleService.getActiveCycle(userId);
+  
+  let startOfCycle, endOfCycle;
+  if (activeCycle) {
+    startOfCycle = activeCycle.startDate;
+    endOfCycle = activeCycle.endDate || new Date(9999, 11, 31); // if no end date, use far future
+  } else {
+    // Fallback if no cycle
+    const { startOfMonth, endOfMonth } = getCurrentMonthDates();
+    startOfCycle = startOfMonth;
+    endOfCycle = endOfMonth;
+  }
 
   const rates = await exchangeRateService.getExchangeRates();
 
@@ -76,14 +90,14 @@ const getSummary = async (userId) => {
     });
   }
   
-  // Month Income Expense
-  const monthStats = await dashboardRepository.getMonthIncomeExpenseByAsset(userObjectId, startOfMonth, endOfMonth);
-  let monthIncome = 0;
-  let monthExpense = 0;
+  // Cycle Income Expense
+  const cycleStats = await dashboardRepository.getMonthIncomeExpenseByAsset(userObjectId, startOfCycle, endOfCycle);
+  let cycleIncome = 0;
+  let cycleExpense = 0;
 
-  monthStats.forEach(stat => {
-    monthIncome += exchangeRateService.calculateEstimatedIDR(stat._id, stat.monthIncome, rates);
-    monthExpense += exchangeRateService.calculateEstimatedIDR(stat._id, stat.monthExpense, rates);
+  cycleStats.forEach(stat => {
+    cycleIncome += exchangeRateService.calculateEstimatedIDR(stat._id, stat.monthIncome, rates);
+    cycleExpense += exchangeRateService.calculateEstimatedIDR(stat._id, stat.monthExpense, rates);
   });
 
   return {
@@ -91,11 +105,16 @@ const getSummary = async (userId) => {
     allocatedFunds,
     assetValue,
     netWorth,
-    monthIncome,
-    monthExpense,
+    monthIncome: cycleIncome, // keep the key name for frontend compatibility for now, or change it
+    monthExpense: cycleExpense,
     availableMoneyBreakdown,
     allocatedFundsBreakdown,
-    assetValueBreakdown
+    assetValueBreakdown,
+    activeCycle: activeCycle ? {
+      name: activeCycle.name,
+      startDate: activeCycle.startDate,
+      endDate: activeCycle.endDate,
+    } : null
   };
 };
 
@@ -133,10 +152,21 @@ const getMonthlyReview = async (userId) => {
 
 const getCharts = async (userId) => {
   const userObjectId = new mongoose.Types.ObjectId(userId);
-  const { startOfMonth, endOfMonth } = getCurrentMonthDates();
+  
+  const activeCycle = await salaryCycleService.getActiveCycle(userId);
+  let startOfCycle, endOfCycle;
+  if (activeCycle) {
+    startOfCycle = activeCycle.startDate;
+    endOfCycle = activeCycle.endDate || new Date(9999, 11, 31);
+  } else {
+    const { startOfMonth, endOfMonth } = getCurrentMonthDates();
+    startOfCycle = startOfMonth;
+    endOfCycle = endOfMonth;
+  }
+  
   const rates = await exchangeRateService.getExchangeRates();
 
-  const expenseByCategoryAsset = await dashboardRepository.getExpenseByCategoryByAsset(userObjectId, startOfMonth, endOfMonth);
+  const expenseByCategoryAsset = await dashboardRepository.getExpenseByCategoryByAsset(userObjectId, startOfCycle, endOfCycle);
 
   const grouped = {};
   expenseByCategoryAsset.forEach(item => {

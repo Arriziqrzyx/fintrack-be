@@ -65,6 +65,16 @@ const transactionSchema = new mongoose.Schema(
       enum: ['SOURCE', 'DESTINATION'],
       default: 'SOURCE',
     },
+    salaryCycleId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'SalaryCycle',
+      default: null,
+      index: true,
+    },
+    isPrimarySalary: {
+      type: Boolean,
+      default: false,
+    },
   },
   {
     timestamps: true,

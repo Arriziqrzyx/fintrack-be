@@ -18,7 +18,17 @@ const getYearlyReport = async (req, res) => {
   }
 };
 
+const getCycleReport = async (req, res) => {
+  try {
+    const report = await reportService.getCycleReport(req.userId, req.params.cycleId);
+    res.status(200).json(report);
+  } catch (error) {
+    res.status(500).json({ message: 'Error generating cycle report', error: error.message });
+  }
+};
+
 module.exports = {
   getMonthlyReport,
-  getYearlyReport
+  getYearlyReport,
+  getCycleReport
 };

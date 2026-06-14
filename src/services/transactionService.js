@@ -6,6 +6,8 @@ const FundTransaction = require('../models/FundTransaction');
 const User = require('../models/User');
 const mongoose = require('mongoose');
 const { getAvailableBalance } = require('./fundService');
+const salaryCycleService = require('./salaryCycleService');
+const SalaryCycle = require('../models/SalaryCycle');
 
 const handleAutoAllocation = async (transaction, category) => {
   await FundTransaction.deleteMany({ sourceTransactionId: transaction._id });
@@ -78,7 +80,7 @@ const getTransactionById = async (id, userId) => {
 };
 
 const createTransaction = async (userId, data) => {
-  const { accountId, type, amount, adminFee, adminFeeAccount, categoryId, note, transferAccountId, transactionDate } = data;
+  const { accountId, type, amount, adminFee, adminFeeAccount, categoryId, note, transferAccountId, transactionDate, isPrimarySalary } = data;
   if (!accountId || !type || amount === undefined || !transactionDate) {
     throw new Error('Missing required fields');
   }
@@ -114,20 +116,42 @@ const createTransaction = async (userId, data) => {
     categoryId: type === 'TRANSFER' || type === 'ADJUSTMENT' ? null : categoryId,
     note,
     transferAccountId: type === 'TRANSFER' ? transferAccountId : null,
-    transactionDate: new Date(transactionDate)
+    transactionDate: new Date(transactionDate),
+    isPrimarySalary: isPrimarySalary || false
   });
+
+  // Determine and set salaryCycleId for non-primary transactions
+  if (!transaction.isPrimarySalary) {
+    const cycle = await SalaryCycle.findOne({
+      userId,
+      startDate: { $lte: transaction.transactionDate },
+      $or: [{ endDate: { $gte: transaction.transactionDate } }, { endDate: null }]
+    });
+    if (cycle) {
+      transaction.salaryCycleId = cycle._id;
+      await transaction.save();
+    }
+  }
 
   if (transaction.type === 'INCOME' && transaction.categoryId) {
     const cat = await Category.findById(transaction.categoryId);
     await handleAutoAllocation(transaction, cat);
   }
+
+  if (transaction.isPrimarySalary) {
+    await salaryCycleService.rebuildUserCycles(userId);
+  }
+
   return transaction;
 };
 
 const updateTransaction = async (id, userId, data) => {
-  const { accountId, type, amount, adminFee, adminFeeAccount, categoryId, note, transferAccountId, transactionDate } = data;
+  const { accountId, type, amount, adminFee, adminFeeAccount, categoryId, note, transferAccountId, transactionDate, isPrimarySalary } = data;
   const transaction = await transactionRepository.getTransactionByIdAndUser(id, userId);
   if (!transaction) throw new Error('Transaction not found');
+
+  // Track if this was primary BEFORE the update
+  const wasPrimary = transaction.isPrimarySalary === true;
 
   if (accountId) transaction.accountId = accountId;
   if (type) transaction.type = type;
@@ -138,12 +162,25 @@ const updateTransaction = async (id, userId, data) => {
   if (note !== undefined) transaction.note = note;
   if (transferAccountId !== undefined) transaction.transferAccountId = transferAccountId;
   if (transactionDate) transaction.transactionDate = new Date(transactionDate);
+  if (isPrimarySalary !== undefined) transaction.isPrimarySalary = isPrimarySalary;
 
   if (transaction.type === 'TRANSFER' || transaction.type === 'ADJUSTMENT') {
     transaction.categoryId = null;
   }
   if (transaction.type !== 'TRANSFER') {
     transaction.transferAccountId = null;
+  }
+
+  const isPrimary = transaction.isPrimarySalary === true;
+
+  // For non-primary, update its cycle if date changed
+  if (!isPrimary) {
+    const cycle = await SalaryCycle.findOne({
+      userId,
+      startDate: { $lte: transaction.transactionDate },
+      $or: [{ endDate: { $gte: transaction.transactionDate } }, { endDate: null }]
+    });
+    transaction.salaryCycleId = cycle ? cycle._id : null;
   }
 
   const updatedTransaction = await transactionRepository.update(transaction);
@@ -154,6 +191,15 @@ const updateTransaction = async (id, userId, data) => {
   } else {
     await FundTransaction.deleteMany({ sourceTransactionId: updatedTransaction._id });
   }
+
+  // Only rebuild cycles if:
+  // 1. It WAS primary (boundary removed/changed)
+  // 2. It IS NOW primary (boundary added/changed)
+  const needsRebuild = wasPrimary || isPrimary;
+  if (needsRebuild) {
+    await salaryCycleService.rebuildUserCycles(userId);
+  }
+
   return updatedTransaction;
 };
 
@@ -161,6 +207,11 @@ const deleteTransaction = async (id, userId) => {
   const transaction = await transactionRepository.deleteByIdAndUser(id, userId);
   if (!transaction) throw new Error('Transaction not found');
   await FundTransaction.deleteMany({ sourceTransactionId: transaction._id });
+  
+  if (transaction.isPrimarySalary) {
+    await salaryCycleService.rebuildUserCycles(userId);
+  }
+  
   return transaction;
 };
 
