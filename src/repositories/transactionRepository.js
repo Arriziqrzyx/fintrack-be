@@ -1,8 +1,8 @@
 const Transaction = require('../models/Transaction');
 
-const getTransactions = async (query, skip = 0, limit = 0) => {
+const getTransactions = async (query, skip = 0, limit = 0, sort = { transactionDate: -1, createdAt: -1 }) => {
   let dbQuery = Transaction.find(query)
-    .sort({ transactionDate: -1, createdAt: -1 })
+    .sort(sort)
     .populate('categoryId', 'name transactionType isDefault')
     .populate('accountId', 'name type assetCode unit')
     .populate('transferAccountId', 'name type assetCode unit');

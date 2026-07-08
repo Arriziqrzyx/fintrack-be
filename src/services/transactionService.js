@@ -41,7 +41,7 @@ const handleAutoAllocation = async (transaction, category) => {
 };
 
 const getTransactions = async (userId, filters) => {
-  const { accountId, startDate, endDate, type, search, page, limit } = filters;
+  const { accountId, startDate, endDate, type, search, page, limit, sortBy } = filters;
   let query = { userId };
   if (accountId) query.accountId = accountId;
   if (type) query.type = type;
@@ -52,14 +52,36 @@ const getTransactions = async (userId, filters) => {
   }
   
   if (search) {
-    query.note = { $regex: search, $options: 'i' };
+    const matchingCategories = await Category.find({
+      $or: [
+        { userId },
+        { isDefault: true } // Include default categories in search
+      ],
+      name: { $regex: search, $options: 'i' }
+    });
+    const categoryIds = matchingCategories.map(c => c._id);
+
+    query.$or = [
+      { note: { $regex: search, $options: 'i' } },
+      { categoryId: { $in: categoryIds } }
+    ];
+  }
+
+  // Setup sorting parameters
+  let sort = { transactionDate: -1, createdAt: -1 };
+  if (sortBy === 'amount_desc') {
+    sort = { amount: -1 };
+  } else if (sortBy === 'amount_asc') {
+    sort = { amount: 1 };
+  } else if (sortBy === 'date_asc') {
+    sort = { transactionDate: 1, createdAt: 1 };
   }
 
   const pageNum = parseInt(page, 10) || 1;
   const limitNum = parseInt(limit, 10) || 0; // 0 means no limit initially, but we can set a default
   const skipNum = limitNum > 0 ? (pageNum - 1) * limitNum : 0;
 
-  const transactions = await transactionRepository.getTransactions(query, skipNum, limitNum);
+  const transactions = await transactionRepository.getTransactions(query, skipNum, limitNum, sort);
   const total = await transactionRepository.countTransactions(query);
 
   return {
