@@ -10,9 +10,8 @@ const aiLimiter = rateLimit({
   max: 10, // Max 10 calls per minute
   message: { message: 'Too many requests to AI helper, please try again after 1 minute' },
   keyGenerator: (req) => {
-    return req.userId || req.ip;
+    return req.userId || req['ip'];
   },
-  validate: { ip: false },
   standardHeaders: true,
   legacyHeaders: false,
 });
