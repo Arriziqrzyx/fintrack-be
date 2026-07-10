@@ -18,6 +18,26 @@ const PORT = process.env.PORT || 5000;
 //   "https://fintrack.arijiq.net"
 // ];
 
+// CORS Configuration
+const allowedOrigins = process.env.FRONTEND_URL
+  ? process.env.FRONTEND_URL.split(',').map(url => url.trim())
+  : ['http://localhost:5173'];
+
+app.use(cors({
+  origin: function (origin, callback) {
+    // allow mobile apps / curl
+    if (!origin) return callback(null, true);
+
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    return callback(new Error("Not allowed by CORS"));
+  },
+  credentials: true,
+  exposedHeaders: ['RateLimit-Reset', 'RateLimit-Limit', 'RateLimit-Remaining']
+}));
+
 // Middleware
 const rateLimit = require('express-rate-limit');
 
@@ -41,25 +61,6 @@ app.use(helmet({
       connectSrc: ["'self'", "http://localhost:5000", "http://localhost:5173", "https://fintrack.arijiq.net"]
     },
   },
-}));
-
-const allowedOrigins = process.env.FRONTEND_URL
-  ? process.env.FRONTEND_URL.split(',').map(url => url.trim())
-  : ['http://localhost:5173'];
-
-app.use(cors({
-  origin: function (origin, callback) {
-    // allow mobile apps / curl
-    if (!origin) return callback(null, true);
-
-    if (allowedOrigins.includes(origin)) {
-      return callback(null, true);
-    }
-
-    return callback(new Error("Not allowed by CORS"));
-  },
-  credentials: true,
-  exposedHeaders: ['RateLimit-Reset', 'RateLimit-Limit', 'RateLimit-Remaining']
 }));
 
 app.use(express.json());
