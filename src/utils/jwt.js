@@ -1,15 +1,22 @@
 const jwt = require('jsonwebtoken');
 
+const JWT_SECRET = process.env.JWT_SECRET;
+const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET;
+
+if (!JWT_SECRET || !JWT_REFRESH_SECRET) {
+  throw new Error('FATAL: JWT_SECRET and JWT_REFRESH_SECRET must be set in environment variables');
+}
+
 const generateTokens = (userId) => {
   const accessToken = jwt.sign(
     { userId },
-    process.env.JWT_SECRET || 'fallback_secret',
+    JWT_SECRET,
     { expiresIn: '15m' }
   );
 
   const refreshToken = jwt.sign(
     { userId },
-    process.env.JWT_REFRESH_SECRET || 'fallback_refresh_secret',
+    JWT_REFRESH_SECRET,
     { expiresIn: '30d' }
   );
 
@@ -17,11 +24,11 @@ const generateTokens = (userId) => {
 };
 
 const verifyAccessToken = (token) => {
-  return jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret');
+  return jwt.verify(token, JWT_SECRET);
 };
 
 const verifyRefreshToken = (token) => {
-  return jwt.verify(token, process.env.JWT_REFRESH_SECRET || 'fallback_refresh_secret');
+  return jwt.verify(token, JWT_REFRESH_SECRET);
 };
 
 module.exports = {

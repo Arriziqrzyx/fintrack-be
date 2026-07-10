@@ -1,9 +1,25 @@
 const bcrypt = require('bcrypt');
+const crypto = require('crypto');
 const userRepository = require('../repositories/userRepository');
 const { generateTokens, verifyRefreshToken } = require('../utils/jwt');
 const Category = require('../models/Category');
 const Account = require('../models/Account');
 const Fund = require('../models/Fund');
+const RefreshToken = require('../models/RefreshToken');
+
+const hashToken = (token) => {
+  return crypto.createHash('sha256').update(token).digest('hex');
+};
+
+const saveRefreshToken = async (userId, token) => {
+  const tokenHash = hashToken(token);
+  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 days
+  await RefreshToken.create({
+    userId,
+    tokenHash,
+    expiresAt
+  });
+};
 
 const registerUser = async (name, username, password, secretPin) => {
   if (!name || !username || !password || !secretPin) {
@@ -26,7 +42,9 @@ const registerUser = async (name, username, password, secretPin) => {
     passwordHash
   });
   
-  return { user, tokens: generateTokens(user._id) };
+  const tokens = generateTokens(user._id);
+  await saveRefreshToken(user._id, tokens.refreshToken);
+  return { user, tokens };
 };
 
 const loginUser = async (username, password) => {
@@ -41,7 +59,10 @@ const loginUser = async (username, password) => {
   if (!isMatch) {
     throw new Error('Invalid credentials');
   }
-  return { user, tokens: generateTokens(user._id) };
+  
+  const tokens = generateTokens(user._id);
+  await saveRefreshToken(user._id, tokens.refreshToken);
+  return { user, tokens };
 };
 
 const refreshUserToken = async (refreshToken) => {
@@ -53,7 +74,28 @@ const refreshUserToken = async (refreshToken) => {
   if (!user) {
     throw new Error('User not found');
   }
-  return { tokens: generateTokens(user._id) };
+
+  // Hash & cari token di database
+  const tokenHash = hashToken(refreshToken);
+  const storedToken = await RefreshToken.findOne({ tokenHash, userId: user._id });
+  if (!storedToken) {
+    throw new Error('Invalid or expired refresh token session');
+  }
+
+  // Hapus token lama (Rotation)
+  await RefreshToken.deleteOne({ _id: storedToken._id });
+
+  // Buat token baru
+  const tokens = generateTokens(user._id);
+  await saveRefreshToken(user._id, tokens.refreshToken);
+  
+  return { tokens };
+};
+
+const revokeRefreshToken = async (refreshToken) => {
+  if (!refreshToken) return;
+  const tokenHash = hashToken(refreshToken);
+  await RefreshToken.deleteOne({ tokenHash });
 };
 
 const getUserProfile = async (userId) => {
@@ -154,5 +196,6 @@ module.exports = {
   refreshUserToken,
   getUserProfile,
   updateUserProfile,
-  completeSetup
+  completeSetup,
+  revokeRefreshToken
 };

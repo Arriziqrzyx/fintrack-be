@@ -7,8 +7,12 @@ const { authenticate } = require('../middleware/auth');
 // Rate limiter for AI routes to protect API quota under free tier
 const aiLimiter = rateLimit({
   windowMs: 1 * 60 * 1000, // 1 minute
-  max: 15, // Max 15 calls per minute
-  message: { message: 'Waduh, pelan-pelan bro! Atmin lagi pusing. Coba lagi semenit lagi ya 😅' },
+  max: 10, // Max 10 calls per minute
+  message: { message: 'Too many requests to AI helper, please try again after 1 minute' },
+  keyGenerator: (req) => {
+    return req.userId || req.ip;
+  },
+  validate: { ip: false },
   standardHeaders: true,
   legacyHeaders: false,
 });

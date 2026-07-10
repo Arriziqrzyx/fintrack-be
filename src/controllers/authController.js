@@ -64,7 +64,13 @@ const refresh = async (req, res) => {
   }
 };
 
-const logout = (req, res) => {
+const logout = async (req, res) => {
+  try {
+    const { refreshToken } = req.cookies;
+    await authService.revokeRefreshToken(refreshToken);
+  } catch (error) {
+    // Silently ignore log errors on revoke during logout
+  }
   res.clearCookie('refreshToken');
   res.json({ message: 'Logout successful' });
 };

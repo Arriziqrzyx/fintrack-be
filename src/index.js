@@ -18,7 +18,29 @@ const PORT = process.env.PORT || 5000;
 // ];
 
 // Middleware
-app.use(helmet());
+const rateLimit = require('express-rate-limit');
+
+const globalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 200, // Limit each IP to 200 requests per 15 minutes
+  message: { message: 'Too many requests, please try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+app.use(globalLimiter);
+
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'"],
+      objectSrc: ["'none'"],
+      frameAncestors: ["'none'"],
+      connectSrc: ["'self'", "http://localhost:5000", "http://localhost:5173", "https://fintrack.arijiq.net"]
+    },
+  },
+}));
 
 // [LOCAL] Comment block ini jika di server
 app.use(cors({
@@ -77,8 +99,17 @@ app.get('/api/health', (req, res) => {
 
 // Global error handler
 app.use((err, req, res, next) => {
-  console.error(err.stack);
-  res.status(500).json({ message: 'Internal Server Error', error: err.message });
+  console.error(err.stack || err);
+  const status = err.status || 500;
+  
+  if (process.env.NODE_ENV === 'production') {
+    return res.status(status).json({ message: 'Internal Server Error' });
+  }
+  
+  return res.status(status).json({ 
+    message: 'Internal Server Error', 
+    error: err.message 
+  });
 });
 
 app.listen(PORT, () => {

@@ -2,6 +2,8 @@ const express = require('express');
 const rateLimit = require('express-rate-limit');
 const { register, login, refresh, logout, me, updateProfile, setup } = require('../controllers/authController');
 const { authenticate } = require('../middleware/auth');
+const { validateBody } = require('../middleware/validationMiddleware');
+const { registerSchema, loginSchema } = require('../validators/authSchemas');
 
 const router = express.Router();
 
@@ -14,8 +16,8 @@ const authLimiter = rateLimit({
   legacyHeaders: false, // Disable the `X-RateLimit-*` headers
 });
 
-router.post('/register', authLimiter, register);
-router.post('/login', authLimiter, login);
+router.post('/register', authLimiter, validateBody(registerSchema), register);
+router.post('/login', authLimiter, validateBody(loginSchema), login);
 router.post('/refresh', refresh);
 router.post('/logout', logout);
 router.get('/me', authenticate, me);
