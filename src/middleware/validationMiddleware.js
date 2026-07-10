@@ -6,7 +6,7 @@ const validateBody = (schema) => {
       next();
     } catch (error) {
       if (error.name === 'ZodError') {
-        const errorMessages = error.errors.map((err) => ({
+        const errorMessages = error.issues.map((err) => ({
           field: err.path.join('.'),
           message: err.message
         }));
