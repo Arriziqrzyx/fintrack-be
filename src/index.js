@@ -43,32 +43,24 @@ app.use(helmet({
   },
 }));
 
-// [LOCAL] Comment block ini jika di server
+const allowedOrigins = process.env.FRONTEND_URL
+  ? process.env.FRONTEND_URL.split(',').map(url => url.trim())
+  : ['http://localhost:5173'];
+
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+  origin: function (origin, callback) {
+    // allow mobile apps / curl
+    if (!origin) return callback(null, true);
+
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    return callback(new Error("Not allowed by CORS"));
+  },
   credentials: true,
   exposedHeaders: ['RateLimit-Reset', 'RateLimit-Limit', 'RateLimit-Remaining']
 }));
-
-// [SERVER] Uncomment block ini untuk production server
-// app.use(cors({
-//   origin: function (origin, callback) {
-//     // allow mobile apps / curl
-//     if (!origin) return callback(null, true);
-//
-//     if (allowedOrigins.includes(origin)) {
-//       return callback(null, true);
-//     }
-//
-//     return callback(new Error("Not allowed by CORS"));
-//   },
-//   credentials: true,
-//   exposedHeaders: [
-//     'RateLimit-Reset',
-//     'RateLimit-Limit',
-//     'RateLimit-Remaining'
-//   ]
-// }));
 
 app.use(express.json());
 app.use(cookieParser());
