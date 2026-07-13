@@ -620,15 +620,31 @@ const executeTool = async (functionName, args, userId) => {
       return {
         total: txs.total,
         showing: txs.transactions.length,
-        transactions: txs.transactions.map(t => ({
-          type: t.type,
-          amount: t.amount,
-          formattedAmount: formatCurrency(t.amount),
-          category: t.categoryId ? t.categoryId.name : 'Uncategorized',
-          account: t.accountId ? t.accountId.name : 'Unknown',
-          date: formatDateWIB(t.transactionDate),
-          note: t.note
-        }))
+        transactions: txs.transactions.map(t => {
+          const baseCurrency = t.baseCurrency || 'IDR';
+          const assetCode = t.assetCode || 'IDR';
+          const isBase = assetCode === baseCurrency;
+          const formattedAmount = isBase 
+            ? `${baseCurrency} ${t.amount.toLocaleString('id-ID')}` 
+            : `${t.amount} ${assetCode} (setara ${baseCurrency} ${Math.round(t.baseAmount || t.amount * (t.conversionRate || 1)).toLocaleString('id-ID')})`;
+
+          return {
+            type: t.type,
+            amount: t.amount,
+            assetCode: assetCode,
+            baseAmount: t.baseAmount || t.amount * (t.conversionRate || 1),
+            baseCurrency: baseCurrency,
+            formattedAmount,
+            category: t.categoryId ? t.categoryId.name : 'Uncategorized',
+            account: t.accountId ? t.accountId.name : 'Unknown',
+            date: formatDateWIB(t.transactionDate),
+            note: t.note,
+            adminFee: t.adminFee || 0,
+            adminFeeCurrency: t.adminFeeCurrency || assetCode,
+            adminFeeBaseAmount: t.adminFeeBaseAmount || 0,
+            adminFeeAccount: t.adminFeeAccount || 'SOURCE'
+          };
+        })
       };
     }
 
@@ -764,15 +780,31 @@ const executeTool = async (functionName, args, userId) => {
     case 'get_recent_transactions':
     {
       const txs = await transactionService.getTransactions(userId, { limit: 5, page: 1 });
-      return txs.transactions.map(t => ({
-        type: t.type,
-        amount: t.amount,
-        formattedAmount: formatCurrency(t.amount),
-        category: t.categoryId ? t.categoryId.name : 'Uncategorized',
-        account: t.accountId ? t.accountId.name : 'Unknown',
-        date: formatDateWIB(t.transactionDate),
-        note: t.note
-      }));
+      return txs.transactions.map(t => {
+        const baseCurrency = t.baseCurrency || 'IDR';
+        const assetCode = t.assetCode || 'IDR';
+        const isBase = assetCode === baseCurrency;
+        const formattedAmount = isBase 
+          ? `${baseCurrency} ${t.amount.toLocaleString('id-ID')}` 
+          : `${t.amount} ${assetCode} (setara ${baseCurrency} ${Math.round(t.baseAmount || t.amount * (t.conversionRate || 1)).toLocaleString('id-ID')})`;
+
+        return {
+          type: t.type,
+          amount: t.amount,
+          assetCode: assetCode,
+          baseAmount: t.baseAmount || t.amount * (t.conversionRate || 1),
+          baseCurrency: baseCurrency,
+          formattedAmount,
+          category: t.categoryId ? t.categoryId.name : 'Uncategorized',
+          account: t.accountId ? t.accountId.name : 'Unknown',
+          date: formatDateWIB(t.transactionDate),
+          note: t.note,
+          adminFee: t.adminFee || 0,
+          adminFeeCurrency: t.adminFeeCurrency || assetCode,
+          adminFeeBaseAmount: t.adminFeeBaseAmount || 0,
+          adminFeeAccount: t.adminFeeAccount || 'SOURCE'
+        };
+      });
     }
 
     case 'get_goals':

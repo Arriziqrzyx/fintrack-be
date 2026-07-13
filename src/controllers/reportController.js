@@ -1,29 +1,29 @@
 const reportService = require('../services/reportService');
 
-const getMonthlyReport = async (req, res) => {
+const getMonthlyReport = async (req, res, next) => {
   try {
     const report = await reportService.getMonthlyReport(req.userId, req.query.year, req.query.month);
     res.status(200).json(report);
   } catch (error) {
-    res.status(500).json({ message: 'Error generating monthly report', error: error.message });
+    next(error);
   }
 };
 
-const getYearlyReport = async (req, res) => {
+const getYearlyReport = async (req, res, next) => {
   try {
     const report = await reportService.getYearlyReport(req.userId, req.query.year);
     res.status(200).json(report);
   } catch (error) {
-    res.status(500).json({ message: 'Error generating yearly report', error: error.message });
+    next(error);
   }
 };
 
-const getCycleReport = async (req, res) => {
+const getCycleReport = async (req, res, next) => {
   try {
     const report = await reportService.getCycleReport(req.userId, req.params.cycleId);
     res.status(200).json(report);
   } catch (error) {
-    res.status(500).json({ message: 'Error generating cycle report', error: error.message });
+    next(error);
   }
 };
 

@@ -1,13 +1,18 @@
 const SalaryCycle = require('../models/SalaryCycle');
 const Transaction = require('../models/Transaction');
 const mongoose = require('mongoose');
+const AppError = require('../utils/AppError');
 
 const getActiveCycle = async (userId) => {
   return await SalaryCycle.findOne({ userId, endDate: null }).sort({ startDate: -1 });
 };
 
 const getCycleById = async (cycleId, userId) => {
-  return await SalaryCycle.findOne({ _id: cycleId, userId });
+  const cycle = await SalaryCycle.findOne({ _id: cycleId, userId });
+  if (!cycle) {
+    throw new AppError('Cycle not found', 404);
+  }
+  return cycle;
 };
 
 const getAllCycles = async (userId) => {

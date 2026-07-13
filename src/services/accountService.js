@@ -1,6 +1,7 @@
 const accountRepository = require('../repositories/accountRepository');
-const Transaction = require('../models/Transaction');
+const transactionRepository = require('../repositories/transactionRepository');
 const exchangeRateService = require('./exchangeRateService');
+const AppError = require('../utils/AppError');
 
 const getAccounts = async (userId, includeArchived) => {
   const accounts = await accountRepository.getAccountsWithBalance(userId, includeArchived);
@@ -13,6 +14,15 @@ const getAccounts = async (userId, includeArchived) => {
       rates, 
       account.unit
     );
+    
+    // Calculate exchangeRate (conversion rate to IDR) based on asset and unit
+    if (['XAU', 'ANTAM', 'UBS'].includes(account.assetCode) && account.unit === 'GRAM') {
+      const troyOunceRate = rates['XAU_TROY_OUNCE'] || 0;
+      account.exchangeRate = troyOunceRate / 31.1034768;
+    } else {
+      account.exchangeRate = rates[account.assetCode] || 1;
+    }
+
     return account;
   });
 };
@@ -20,7 +30,7 @@ const getAccounts = async (userId, includeArchived) => {
 const getAccountById = async (id, userId) => {
   const account = await accountRepository.findByIdAndUser(id, userId);
   if (!account) {
-    throw new Error('Account not found');
+    throw new AppError('Account not found', 404);
   }
   return account;
 };
@@ -28,7 +38,7 @@ const getAccountById = async (id, userId) => {
 const createAccount = async (userId, data) => {
   const { name, type, assetClass, assetCode, unit, initialBalance } = data;
   if (!name || !type) {
-    throw new Error('Name and type are required');
+    throw new AppError('Name and type are required', 400);
   }
   return await accountRepository.create({
     userId,
@@ -45,7 +55,7 @@ const updateAccount = async (id, userId, data) => {
   const { name, type, isArchived, assetClass, assetCode, unit } = data;
   const account = await accountRepository.findByIdAndUser(id, userId);
   if (!account) {
-    throw new Error('Account not found');
+    throw new AppError('Account not found', 404);
   }
   if (name) account.name = name;
   if (type) account.type = type;
@@ -59,7 +69,7 @@ const updateAccount = async (id, userId, data) => {
 const deleteAccount = async (id, userId) => {
   const account = await accountRepository.deleteByIdAndUser(id, userId);
   if (!account) {
-    throw new Error('Account not found');
+    throw new AppError('Account not found', 404);
   }
   return account;
 };
@@ -67,16 +77,15 @@ const deleteAccount = async (id, userId) => {
 const adjustBalance = async (id, userId, data) => {
   const { amount, note, transactionDate } = data;
   if (amount === undefined) {
-    throw new Error('Amount is required');
+    throw new AppError('Amount is required', 400);
   }
   const account = await accountRepository.findByIdAndUser(id, userId);
   if (!account) {
-    throw new Error('Account not found');
+    throw new AppError('Account not found', 404);
   }
 
-  // Ideally this should use transactionRepository, but for now we use the model directly
-  // until we refactor transactionController
-  const transaction = await Transaction.create({
+  // Corrected direct Model access violation: call transactionRepository.create
+  const transaction = await transactionRepository.create({
     userId,
     accountId: account._id,
     type: 'ADJUSTMENT',

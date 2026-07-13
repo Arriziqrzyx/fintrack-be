@@ -2,32 +2,6 @@ const Transaction = require('../models/Transaction');
 const Account = require('../models/Account');
 const FundTransaction = require('../models/FundTransaction');
 
-const getTotalInitialBalanceByAsset = async (userId) => {
-  return await Account.aggregate([
-    { $match: { userId, isArchived: false } },
-    {
-      $group: {
-        _id: { assetCode: '$assetCode', unit: '$unit' },
-        totalInitialBalance: { $sum: '$initialBalance' }
-      }
-    }
-  ]);
-};
-
-const getNetTransactionTotalByAsset = async (userId) => {
-  return await Transaction.aggregate([
-    { $match: { userId } },
-    {
-      $group: {
-        _id: '$assetCode',
-        totalIncome: { $sum: { $cond: [{ $eq: ['$type', 'INCOME'] }, '$amount', 0] } },
-        totalExpense: { $sum: { $cond: [{ $eq: ['$type', 'EXPENSE'] }, '$amount', 0] } },
-        totalAdjustment: { $sum: { $cond: [{ $eq: ['$type', 'ADJUSTMENT'] }, '$amount', 0] } }
-      }
-    }
-  ]);
-};
-
 const getAllocatedFundsTotal = async (userId) => {
   const allocatedAgg = await FundTransaction.aggregate([
     { $match: { userId } },
@@ -56,9 +30,16 @@ const getMonthIncomeExpenseByAsset = async (userId, startOfMonth, endOfMonth) =>
     },
     {
       $group: {
-        _id: '$assetCode',
-        monthIncome: { $sum: { $cond: [{ $eq: ['$type', 'INCOME'] }, '$amount', 0] } },
-        monthExpense: { $sum: { $cond: [{ $eq: ['$type', 'EXPENSE'] }, '$amount', 0] } }
+        _id: null,
+        monthIncome: { $sum: { $cond: [{ $eq: ['$type', 'INCOME'] }, '$baseAmount', 0] } },
+        monthExpense: {
+          $sum: {
+            $add: [
+              { $cond: [{ $eq: ['$type', 'EXPENSE'] }, '$baseAmount', 0] },
+              { $cond: [{ $in: ['$type', ['TRANSFER', 'CONVERSION']] }, '$adminFeeBaseAmount', 0] }
+            ]
+          }
+        }
       }
     }
   ]);
@@ -70,18 +51,27 @@ const getMonthlyReviewStatsByAsset = async (userId, sixMonthsAgo) => {
       $match: {
         userId,
         transactionDate: { $gte: sixMonthsAgo },
-        type: { $in: ['INCOME', 'EXPENSE'] }
+        $or: [
+          { type: { $in: ['INCOME', 'EXPENSE'] } },
+          { type: { $in: ['TRANSFER', 'CONVERSION'] }, adminFee: { $gt: 0 } }
+        ]
       }
     },
     {
       $group: {
         _id: {
           year: { $year: '$transactionDate' },
-          month: { $month: '$transactionDate' },
-          assetCode: '$assetCode'
+          month: { $month: '$transactionDate' }
         },
-        income: { $sum: { $cond: [{ $eq: ['$type', 'INCOME'] }, '$amount', 0] } },
-        expense: { $sum: { $cond: [{ $eq: ['$type', 'EXPENSE'] }, '$amount', 0] } }
+        income: { $sum: { $cond: [{ $eq: ['$type', 'INCOME'] }, '$baseAmount', 0] } },
+        expense: {
+          $sum: {
+            $add: [
+              { $cond: [{ $eq: ['$type', 'EXPENSE'] }, '$baseAmount', 0] },
+              { $cond: [{ $in: ['$type', ['TRANSFER', 'CONVERSION']] }, '$adminFeeBaseAmount', 0] }
+            ]
+          }
+        }
       }
     },
     { $sort: { '_id.year': 1, '_id.month': 1 } }
@@ -94,19 +84,59 @@ const getExpenseByCategoryByAsset = async (userId, startOfMonth, endOfMonth) => 
       $match: {
         userId,
         transactionDate: { $gte: startOfMonth, $lte: endOfMonth },
-        type: 'EXPENSE'
-      }
-    },
-    {
-      $group: {
-        _id: { categoryId: '$categoryId', assetCode: '$assetCode' },
-        totalAmount: { $sum: '$amount' }
+        $or: [
+          { type: 'EXPENSE' },
+          { type: { $in: ['TRANSFER', 'CONVERSION'] }, adminFee: { $gt: 0 } }
+        ]
       }
     },
     {
       $lookup: {
         from: 'categories',
-        localField: '_id.categoryId',
+        let: { uId: '$userId' },
+        pipeline: [
+          {
+            $match: {
+              $expr: {
+                $and: [
+                  { $eq: ['$userId', '$$uId'] },
+                  { $eq: ['$name', 'Payment Fee'] }
+                ]
+              }
+            }
+          }
+        ],
+        as: 'paymentFeeCat'
+      }
+    },
+    {
+      $addFields: {
+        resolvedCategoryId: {
+          $cond: [
+            { $in: ['$type', ['TRANSFER', 'CONVERSION']] },
+            { $arrayElemAt: ['$paymentFeeCat._id', 0] },
+            '$categoryId'
+          ]
+        }
+      }
+    },
+    {
+      $group: {
+        _id: '$resolvedCategoryId',
+        totalAmount: {
+          $sum: {
+            $add: [
+              { $cond: [{ $eq: ['$type', 'EXPENSE'] }, '$baseAmount', 0] },
+              { $cond: [{ $in: ['$type', ['TRANSFER', 'CONVERSION']] }, '$adminFeeBaseAmount', 0] }
+            ]
+          }
+        }
+      }
+    },
+    {
+      $lookup: {
+        from: 'categories',
+        localField: '_id',
         foreignField: '_id',
         as: 'category'
       }
@@ -117,9 +147,14 @@ const getExpenseByCategoryByAsset = async (userId, startOfMonth, endOfMonth) => 
     {
       $project: {
         _id: 0,
-        categoryId: '$_id.categoryId',
-        assetCode: '$_id.assetCode',
-        categoryName: { $ifNull: ['$category.name', 'Uncategorized'] },
+        categoryId: '$_id',
+        categoryName: {
+          $cond: [
+            { $eq: ['$_id', null] },
+            'Uncategorized',
+            { $ifNull: ['$category.name', 'Payment Fee'] }
+          ]
+        },
         totalAmount: 1
       }
     }
@@ -127,8 +162,6 @@ const getExpenseByCategoryByAsset = async (userId, startOfMonth, endOfMonth) => 
 };
 
 module.exports = {
-  getTotalInitialBalanceByAsset,
-  getNetTransactionTotalByAsset,
   getAllocatedFundsTotal,
   getMonthIncomeExpenseByAsset,
   getMonthlyReviewStatsByAsset,

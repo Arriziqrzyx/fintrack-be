@@ -24,6 +24,10 @@ const userSchema = new mongoose.Schema({
   autoAllocationPercentage: {
     type: Number,
     default: 0
+  },
+  profilePicture: {
+    type: String,
+    default: 'cat-001.jpg'
   }
 }, {
   timestamps: true // adds createdAt and updatedAt

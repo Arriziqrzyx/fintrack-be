@@ -75,11 +75,55 @@ const transactionSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    // Multi-currency snapshots
+    baseCurrency: {
+      type: String,
+      default: 'IDR',
+    },
+    baseAmount: {
+      type: Number,
+      default: 0,
+    },
+    exchangeRateSnapshot: {
+      fromCurrency: { type: String, default: null },
+      toCurrency: { type: String, default: null },
+      exchangeRate: { type: Number, default: null },
+      exchangeRateSource: { type: String, default: null },
+      exchangeRateTimestamp: { type: Date, default: null },
+    },
+    adminFeeCurrency: {
+      type: String,
+      default: null,
+    },
+    adminFeeBaseAmount: {
+      type: Number,
+      default: 0,
+    },
+    // Balance snapshots (fixed at creation, never re-calculated)
+    balanceBefore: {
+      type: Number,
+      default: null,
+    },
+    balanceAfter: {
+      type: Number,
+      default: null,
+    },
+    destBalanceBefore: {
+      type: Number,
+      default: null,
+    },
+    destBalanceAfter: {
+      type: Number,
+      default: null,
+    },
   },
   {
     timestamps: true,
   }
 );
+
+transactionSchema.index({ userId: 1, transactionDate: -1 });
+transactionSchema.index({ userId: 1, accountId: 1, transactionDate: -1 });
 
 const Transaction = mongoose.model('Transaction', transactionSchema);
 

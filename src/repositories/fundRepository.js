@@ -4,48 +4,6 @@ const Transaction = require('../models/Transaction');
 const Account = require('../models/Account');
 const mongoose = require('mongoose');
 
-const getAvailableBalance = async (userId) => {
-  const accounts = await Account.find({ userId, isArchived: false });
-  const totalInitialBalance = accounts.reduce((acc, account) => acc + account.initialBalance, 0);
-
-  const allTimeAgg = await Transaction.aggregate([
-    { $match: { userId } },
-    {
-      $group: {
-        _id: null,
-        totalIncome: { $sum: { $cond: [{ $eq: ['$type', 'INCOME'] }, '$amount', 0] } },
-        totalExpense: { $sum: { $cond: [{ $eq: ['$type', 'EXPENSE'] }, '$amount', 0] } },
-        totalAdjustment: { $sum: { $cond: [{ $eq: ['$type', 'ADJUSTMENT'] }, '$amount', 0] } }
-      }
-    }
-  ]);
-  
-  let netTransactionTotal = 0;
-  if (allTimeAgg.length > 0) {
-    const { totalIncome, totalExpense, totalAdjustment } = allTimeAgg[0];
-    netTransactionTotal = totalIncome - totalExpense + totalAdjustment;
-  }
-  const totalBalance = totalInitialBalance + netTransactionTotal;
-
-  const allocatedAgg = await FundTransaction.aggregate([
-    { $match: { userId } },
-    {
-      $group: {
-        _id: null,
-        totalAllocated: { $sum: { $cond: [{ $in: ['$type', ['ALLOCATE', 'TRANSFER_IN']] }, '$amount', 0] } },
-        totalWithdrawn: { $sum: { $cond: [{ $in: ['$type', ['WITHDRAW', 'TRANSFER_OUT']] }, '$amount', 0] } }
-      }
-    }
-  ]);
-
-  let allocatedFunds = 0;
-  if (allocatedAgg.length > 0) {
-    allocatedFunds = allocatedAgg[0].totalAllocated - allocatedAgg[0].totalWithdrawn;
-  }
-
-  return totalBalance - allocatedFunds;
-};
-
 const getFundsWithCurrentAmount = async (userId) => {
   return await Fund.aggregate([
     { $match: { userId, status: { $ne: 'ARCHIVED' } } },
@@ -129,13 +87,27 @@ const getTransactionsByFundId = async (fundId, userId) => {
     .populate('transferFundId', 'name');
 };
 
+const findActiveFundsByUserId = async (userId) => {
+  return await Fund.find({ userId, status: { $ne: 'ARCHIVED' } });
+};
+
+const deleteTransactionsBySourceId = async (sourceTransactionId) => {
+  return await FundTransaction.deleteMany({ sourceTransactionId });
+};
+
+const insertTransactions = async (transactions) => {
+  return await FundTransaction.insertMany(transactions);
+};
+
 module.exports = {
-  getAvailableBalance,
   getFundsWithCurrentAmount,
   findByIdAndUser,
   create,
   update,
   getCurrentFundAmount,
   createTransaction,
-  getTransactionsByFundId
+  getTransactionsByFundId,
+  findActiveFundsByUserId,
+  deleteTransactionsBySourceId,
+  insertTransactions
 };

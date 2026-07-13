@@ -92,20 +92,15 @@ const getSummary = async (userId) => {
   
   // Cycle Income Expense
   const cycleStats = await dashboardRepository.getMonthIncomeExpenseByAsset(userObjectId, startOfCycle, endOfCycle);
-  let cycleIncome = 0;
-  let cycleExpense = 0;
-
-  cycleStats.forEach(stat => {
-    cycleIncome += exchangeRateService.calculateEstimatedIDR(stat._id, stat.monthIncome, rates);
-    cycleExpense += exchangeRateService.calculateEstimatedIDR(stat._id, stat.monthExpense, rates);
-  });
+  const cycleIncome = cycleStats.length > 0 ? cycleStats[0].monthIncome : 0;
+  const cycleExpense = cycleStats.length > 0 ? cycleStats[0].monthExpense : 0;
 
   return {
     availableMoney,
     allocatedFunds,
     assetValue,
     netWorth,
-    monthIncome: cycleIncome, // keep the key name for frontend compatibility for now, or change it
+    monthIncome: cycleIncome,
     monthExpense: cycleExpense,
     availableMoneyBreakdown,
     allocatedFundsBreakdown,
@@ -120,7 +115,6 @@ const getSummary = async (userId) => {
 
 const getMonthlyReview = async (userId) => {
   const userObjectId = new mongoose.Types.ObjectId(userId);
-  const rates = await exchangeRateService.getExchangeRates();
   
   const sixMonthsAgo = new Date();
   sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 5);
@@ -129,22 +123,12 @@ const getMonthlyReview = async (userId) => {
 
   const reviewAgg = await dashboardRepository.getMonthlyReviewStatsByAsset(userObjectId, sixMonthsAgo);
 
-  const grouped = {};
-  reviewAgg.forEach(item => {
-    const key = `${item._id.year}-${item._id.month}`;
-    if (!grouped[key]) {
-      grouped[key] = {
-        month: item._id.month,
-        year: item._id.year,
-        income: 0,
-        expense: 0
-      };
-    }
-    grouped[key].income += exchangeRateService.calculateEstimatedIDR(item._id.assetCode, item.income, rates);
-    grouped[key].expense += exchangeRateService.calculateEstimatedIDR(item._id.assetCode, item.expense, rates);
-  });
-
-  return Object.values(grouped).sort((a, b) => {
+  return reviewAgg.map(item => ({
+    month: item._id.month,
+    year: item._id.year,
+    income: item.income,
+    expense: item.expense
+  })).sort((a, b) => {
     if (a.year !== b.year) return a.year - b.year;
     return a.month - b.month;
   });
@@ -164,26 +148,11 @@ const getCharts = async (userId) => {
     endOfCycle = endOfMonth;
   }
   
-  const rates = await exchangeRateService.getExchangeRates();
+  const expenseByCategory = await dashboardRepository.getExpenseByCategoryByAsset(userObjectId, startOfCycle, endOfCycle);
 
-  const expenseByCategoryAsset = await dashboardRepository.getExpenseByCategoryByAsset(userObjectId, startOfCycle, endOfCycle);
-
-  const grouped = {};
-  expenseByCategoryAsset.forEach(item => {
-    const key = item.categoryId ? item.categoryId.toString() : 'uncategorized';
-    if (!grouped[key]) {
-      grouped[key] = {
-        categoryId: item.categoryId,
-        categoryName: item.categoryName,
-        totalAmount: 0
-      };
-    }
-    grouped[key].totalAmount += exchangeRateService.calculateEstimatedIDR(item.assetCode, item.totalAmount, rates);
-  });
-
-  const expenseByCategory = Object.values(grouped).sort((a, b) => b.totalAmount - a.totalAmount);
-
-  return { expenseByCategory };
+  return { 
+    expenseByCategory: expenseByCategory.sort((a, b) => b.totalAmount - a.totalAmount) 
+  };
 };
 
 module.exports = {

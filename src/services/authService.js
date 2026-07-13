@@ -6,6 +6,7 @@ const Category = require('../models/Category');
 const Account = require('../models/Account');
 const Fund = require('../models/Fund');
 const RefreshToken = require('../models/RefreshToken');
+const AppError = require('../utils/AppError');
 
 const hashToken = (token) => {
   return crypto.createHash('sha256').update(token).digest('hex');
@@ -23,16 +24,16 @@ const saveRefreshToken = async (userId, token) => {
 
 const registerUser = async (name, username, password, secretPin) => {
   if (!name || !username || !password || !secretPin) {
-    throw new Error('Name, username, password, and secret PIN are required');
+    throw new AppError('Name, username, password, and secret PIN are required', 400);
   }
 
   if (secretPin !== process.env.SECRET_PIN) {
-    throw new Error('Invalid secret PIN');
+    throw new AppError('Invalid secret PIN', 400);
   }
 
   const existingUser = await userRepository.findByUsername(username);
   if (existingUser) {
-    throw new Error('Username already registered');
+    throw new AppError('Username already registered', 400);
   }
 
   const passwordHash = await bcrypt.hash(password, 10);
@@ -49,15 +50,15 @@ const registerUser = async (name, username, password, secretPin) => {
 
 const loginUser = async (username, password) => {
   if (!username || !password) {
-    throw new Error('Username and password are required');
+    throw new AppError('Username and password are required', 400);
   }
   const user = await userRepository.findByUsername(username);
   if (!user) {
-    throw new Error('Invalid credentials');
+    throw new AppError('Invalid credentials', 401);
   }
   const isMatch = await bcrypt.compare(password, user.passwordHash);
   if (!isMatch) {
-    throw new Error('Invalid credentials');
+    throw new AppError('Invalid credentials', 401);
   }
   
   const tokens = generateTokens(user._id);
@@ -67,19 +68,19 @@ const loginUser = async (username, password) => {
 
 const refreshUserToken = async (refreshToken) => {
   if (!refreshToken) {
-    throw new Error('Refresh token not found');
+    throw new AppError('Refresh token not found', 401);
   }
   const decoded = verifyRefreshToken(refreshToken);
   const user = await userRepository.findById(decoded.userId);
   if (!user) {
-    throw new Error('User not found');
+    throw new AppError('User not found', 404);
   }
 
   // Hash & cari token di database
   const tokenHash = hashToken(refreshToken);
   const storedToken = await RefreshToken.findOne({ tokenHash, userId: user._id });
   if (!storedToken) {
-    throw new Error('Invalid or expired refresh token session');
+    throw new AppError('Invalid or expired refresh token session', 401);
   }
 
   // Hapus token lama (Rotation)
@@ -87,7 +88,13 @@ const refreshUserToken = async (refreshToken) => {
 
   // Buat token baru
   const tokens = generateTokens(user._id);
-  await saveRefreshToken(user._id, tokens.refreshToken);
+  try {
+    await saveRefreshToken(user._id, tokens.refreshToken);
+  } catch (error) {
+    if (error.code !== 11000) {
+      throw error;
+    }
+  }
   
   return { tokens };
 };
@@ -101,28 +108,48 @@ const revokeRefreshToken = async (refreshToken) => {
 const getUserProfile = async (userId) => {
   const user = await userRepository.findByIdWithoutPassword(userId);
   if (!user) {
-    throw new Error('User not found');
+    throw new AppError('User not found', 404);
   }
   return user;
 };
 
-const updateUserProfile = async (userId, name, currentPassword, newPassword) => {
+const ALLOWED_PROFILE_PICTURES = [
+  'cat-001.jpg', 'cat-002.jpg', 'cat-003.jpg', 'cat-004.jpg',
+  'cat-005.jpg', 'cat-006.jpg', 'cat-007.jpg', 'cat-008.jpg'
+];
+
+const updateUserProfile = async (userId, name, currentPassword, newPassword, autoAllocationPercentage, profilePicture) => {
   const user = await userRepository.findById(userId);
   if (!user) {
-    throw new Error('User not found');
+    throw new AppError('User not found', 404);
   }
 
   if (name && name.trim().length > 0) {
     user.name = name.trim();
   }
 
+  if (autoAllocationPercentage !== undefined) {
+    const percentage = Number(autoAllocationPercentage);
+    if (isNaN(percentage) || percentage < 0 || percentage > 100) {
+      throw new AppError('Auto allocation percentage must be between 0 and 100', 400);
+    }
+    user.autoAllocationPercentage = percentage;
+  }
+
+  if (profilePicture !== undefined) {
+    if (!ALLOWED_PROFILE_PICTURES.includes(profilePicture)) {
+      throw new AppError('Invalid profile picture selection', 400);
+    }
+    user.profilePicture = profilePicture;
+  }
+
   if (newPassword) {
     if (!currentPassword) {
-      throw new Error('Current password is required to set a new password');
+      throw new AppError('Current password is required to set a new password', 400);
     }
     const isMatch = await bcrypt.compare(currentPassword, user.passwordHash);
     if (!isMatch) {
-      throw new Error('Incorrect current password');
+      throw new AppError('Incorrect current password', 400);
     }
     user.passwordHash = await bcrypt.hash(newPassword, 10);
   }
@@ -133,13 +160,14 @@ const updateUserProfile = async (userId, name, currentPassword, newPassword) => 
     name: user.name,
     username: user.username,
     isSetupComplete: user.isSetupComplete,
-    autoAllocationPercentage: user.autoAllocationPercentage
+    autoAllocationPercentage: user.autoAllocationPercentage,
+    profilePicture: user.profilePicture
   };
 };
 
 const completeSetup = async (userId, { categories, autoAllocationPercentage, accounts, funds }) => {
   if (!categories || !Array.isArray(categories)) {
-    throw new Error('Categories array is required');
+    throw new AppError('Categories array is required', 400);
   }
 
   // Clear existing categories

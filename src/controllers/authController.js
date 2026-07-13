@@ -9,7 +9,10 @@ const setRefreshCookie = (res, refreshToken) => {
   });
 };
 
-const register = async (req, res) => {
+const fs = require('fs');
+const path = require('path');
+
+const register = async (req, res, next) => {
   try {
     const { name, username, password, secretPin } = req.body;
     const { user, tokens } = await authService.registerUser(name, username, password, secretPin);
@@ -22,16 +25,16 @@ const register = async (req, res) => {
         name: user.name,
         username: user.username,
         isSetupComplete: user.isSetupComplete,
-        autoAllocationPercentage: user.autoAllocationPercentage
+        autoAllocationPercentage: user.autoAllocationPercentage,
+        profilePicture: user.profilePicture
       }
     });
   } catch (error) {
-    const status = error.message.includes('required') || error.message.includes('registered') || error.message.includes('Invalid secret PIN') ? 400 : 500;
-    res.status(status).json({ message: error.message || 'Server error during registration' });
+    next(error);
   }
 };
 
-const login = async (req, res) => {
+const login = async (req, res, next) => {
   try {
     const { username, password } = req.body;
     const { user, tokens } = await authService.loginUser(username, password);
@@ -44,27 +47,27 @@ const login = async (req, res) => {
         name: user.name,
         username: user.username,
         isSetupComplete: user.isSetupComplete,
-        autoAllocationPercentage: user.autoAllocationPercentage
+        autoAllocationPercentage: user.autoAllocationPercentage,
+        profilePicture: user.profilePicture
       }
     });
   } catch (error) {
-    const status = error.message.includes('credentials') || error.message.includes('required') ? 401 : 500;
-    res.status(status).json({ message: error.message || 'Server error during login' });
+    next(error);
   }
 };
 
-const refresh = async (req, res) => {
+const refresh = async (req, res, next) => {
   try {
     const { refreshToken } = req.cookies;
     const { tokens } = await authService.refreshUserToken(refreshToken);
     setRefreshCookie(res, tokens.refreshToken);
     res.json({ accessToken: tokens.accessToken });
   } catch (error) {
-    res.status(401).json({ message: error.message || 'Invalid or expired refresh token' });
+    next(error);
   }
 };
 
-const logout = async (req, res) => {
+const logout = async (req, res, next) => {
   try {
     const { refreshToken } = req.cookies;
     await authService.revokeRefreshToken(refreshToken);
@@ -75,7 +78,7 @@ const logout = async (req, res) => {
   res.json({ message: 'Logout successful' });
 };
 
-const me = async (req, res) => {
+const me = async (req, res, next) => {
   try {
     const user = await authService.getUserProfile(req.userId);
     res.json({ 
@@ -84,30 +87,29 @@ const me = async (req, res) => {
         name: user.name,
         username: user.username,
         isSetupComplete: user.isSetupComplete,
-        autoAllocationPercentage: user.autoAllocationPercentage
+        autoAllocationPercentage: user.autoAllocationPercentage,
+        profilePicture: user.profilePicture
       } 
     });
   } catch (error) {
-    const status = error.message === 'User not found' ? 404 : 500;
-    res.status(status).json({ message: error.message || 'Server error fetching user profile' });
+    next(error);
   }
 };
 
-const updateProfile = async (req, res) => {
+const updateProfile = async (req, res, next) => {
   try {
-    const { name, currentPassword, newPassword } = req.body;
-    const updatedUser = await authService.updateUserProfile(req.userId, name, currentPassword, newPassword);
+    const { name, currentPassword, newPassword, autoAllocationPercentage, profilePicture } = req.body;
+    const updatedUser = await authService.updateUserProfile(req.userId, name, currentPassword, newPassword, autoAllocationPercentage, profilePicture);
     res.json({
       message: 'Profile updated successfully',
       user: updatedUser
     });
   } catch (error) {
-    const status = error.message.includes('password') ? 400 : 500;
-    res.status(status).json({ message: error.message || 'Server error updating profile' });
+    next(error);
   }
 };
 
-const setup = async (req, res) => {
+const setup = async (req, res, next) => {
   try {
     const user = await authService.completeSetup(req.userId, req.body);
     res.json({
@@ -117,12 +119,23 @@ const setup = async (req, res) => {
         name: user.name,
         username: user.username,
         isSetupComplete: user.isSetupComplete,
-        autoAllocationPercentage: user.autoAllocationPercentage
+        autoAllocationPercentage: user.autoAllocationPercentage,
+        profilePicture: user.profilePicture
       }
     });
   } catch (error) {
-    const status = error.message.includes('required') ? 400 : 500;
-    res.status(status).json({ message: error.message || 'Server error during setup' });
+    next(error);
+  }
+};
+
+const getProfilePictures = async (req, res, next) => {
+  try {
+    const picturesDir = path.join(__dirname, '../pictures');
+    const files = await fs.promises.readdir(picturesDir);
+    const images = files.filter(file => file.endsWith('.jpg'));
+    res.json({ pictures: images });
+  } catch (error) {
+    next(error);
   }
 };
 
@@ -133,5 +146,6 @@ module.exports = {
   logout,
   me,
   updateProfile,
-  setup
+  setup,
+  getProfilePictures
 };

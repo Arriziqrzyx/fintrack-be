@@ -12,25 +12,28 @@ const {
 
 const { authenticate } = require('../middleware/auth');
 
+const { validateBody } = require('../middleware/validationMiddleware');
+const { createFundSchema, updateFundSchema, allocateFundSchema, withdrawFundSchema, transferFundSchema } = require('../validators/fundSchemas');
+
 router.use(authenticate);
 
 router.route('/')
   .get(getFunds)
-  .post(createFund);
+  .post(validateBody(createFundSchema), createFund);
 
 router.route('/transfer')
-  .post(transferFund);
+  .post(validateBody(transferFundSchema), transferFund);
 
 router.route('/:id')
-  .put(updateFund);
+  .put(validateBody(updateFundSchema), updateFund);
 
 router.route('/:id/transactions')
   .get(getFundTransactions);
 
 router.route('/:id/allocate')
-  .post(allocateFund);
+  .post(validateBody(allocateFundSchema), allocateFund);
 
 router.route('/:id/withdraw')
-  .post(withdrawFund);
+  .post(validateBody(withdrawFundSchema), withdrawFund);
 
 module.exports = router;

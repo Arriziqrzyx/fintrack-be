@@ -16,7 +16,10 @@ const aiLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-router.post('/chat', authenticate, aiLimiter, aiController.chat);
+const { validateBody } = require('../middleware/validationMiddleware');
+const { chatSchema } = require('../validators/aiSchemas');
+
+router.post('/chat', authenticate, aiLimiter, validateBody(chatSchema), aiController.chat);
 router.get('/history', authenticate, aiLimiter, aiController.getHistory);
 router.delete('/history', authenticate, aiLimiter, aiController.clearHistory);
 

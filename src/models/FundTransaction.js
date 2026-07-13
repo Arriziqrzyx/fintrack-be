@@ -40,4 +40,6 @@ const fundTransactionSchema = new mongoose.Schema({
   }
 }, { timestamps: { createdAt: true, updatedAt: false } });
 
+fundTransactionSchema.index({ userId: 1, fundId: 1 });
+
 module.exports = mongoose.model('FundTransaction', fundTransactionSchema);

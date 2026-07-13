@@ -4,6 +4,7 @@ const mongoose = require('mongoose');
 const accountService = require('./accountService');
 const dashboardRepository = require('../repositories/dashboardRepository');
 const { isAllocatableAccount } = require('../utils/accountUtils');
+const AppError = require('../utils/AppError');
 
 const getAvailableBalance = async (userId) => {
   const accounts = await accountService.getAccounts(userId, 'false');
@@ -22,7 +23,7 @@ const getFunds = async (userId) => {
 const createFund = async (userId, data) => {
   const { name, type, targetAmount, targetDate } = data;
   if (!name || !type) {
-    throw new Error('Name and type are required');
+    throw new AppError('Name and type are required', 400);
   }
   const fund = await fundRepository.create({
     userId,
@@ -38,7 +39,7 @@ const updateFund = async (id, userId, data) => {
   const { name, type, targetAmount, targetDate, status } = data;
   const fund = await fundRepository.findByIdAndUser(id, userId);
   if (!fund) {
-    throw new Error('Fund not found');
+    throw new AppError('Fund not found', 404);
   }
   if (name) fund.name = name;
   if (type) fund.type = type;
@@ -51,15 +52,15 @@ const updateFund = async (id, userId, data) => {
 const allocateFund = async (id, userId, data) => {
   const { amount, note } = data;
   if (!amount || amount <= 0) {
-    throw new Error('Valid amount is required');
+    throw new AppError('Valid amount is required', 400);
   }
   const fund = await fundRepository.findByIdAndUser(id, userId);
   if (!fund) {
-    throw new Error('Fund not found');
+    throw new AppError('Fund not found', 404);
   }
-  const availableBalance = await fundRepository.getAvailableBalance(new mongoose.Types.ObjectId(userId));
+  const availableBalance = await getAvailableBalance(userId);
   if (amount > availableBalance) {
-    throw new Error('Insufficient Available Balance');
+    throw new AppError('Insufficient Available Balance', 400);
   }
   return await fundRepository.createTransaction({
     userId,
@@ -73,15 +74,15 @@ const allocateFund = async (id, userId, data) => {
 const withdrawFund = async (id, userId, data) => {
   const { amount, note } = data;
   if (!amount || amount <= 0) {
-    throw new Error('Valid amount is required');
+    throw new AppError('Valid amount is required', 400);
   }
   const fund = await fundRepository.findByIdAndUser(id, userId);
   if (!fund) {
-    throw new Error('Fund not found');
+    throw new AppError('Fund not found', 404);
   }
   const currentAmount = await fundRepository.getCurrentFundAmount(new mongoose.Types.ObjectId(userId), new mongoose.Types.ObjectId(id));
   if (amount > currentAmount) {
-    throw new Error('Insufficient funds in this allocation');
+    throw new AppError('Insufficient funds in this allocation', 400);
   }
   return await fundRepository.createTransaction({
     userId,
@@ -95,19 +96,19 @@ const withdrawFund = async (id, userId, data) => {
 const transferFund = async (userId, data) => {
   const { sourceFundId, destinationFundId, amount, note } = data;
   if (!sourceFundId || !destinationFundId || !amount || amount <= 0) {
-    throw new Error('Valid source, destination, and amount are required');
+    throw new AppError('Valid source, destination, and amount are required', 400);
   }
   if (sourceFundId === destinationFundId) {
-    throw new Error('Source and destination funds cannot be the same');
+    throw new AppError('Source and destination funds cannot be the same', 400);
   }
   const sourceFund = await fundRepository.findByIdAndUser(sourceFundId, userId);
   const destFund = await fundRepository.findByIdAndUser(destinationFundId, userId);
   if (!sourceFund || !destFund) {
-    throw new Error('One or both funds not found');
+    throw new AppError('One or both funds not found', 404);
   }
   const currentAmount = await fundRepository.getCurrentFundAmount(new mongoose.Types.ObjectId(userId), new mongoose.Types.ObjectId(sourceFundId));
   if (amount > currentAmount) {
-    throw new Error('Insufficient funds in the source allocation');
+    throw new AppError('Insufficient funds in the source allocation', 400);
   }
 
   const txOut = await fundRepository.createTransaction({

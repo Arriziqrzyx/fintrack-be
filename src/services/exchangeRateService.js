@@ -8,9 +8,8 @@ const CACHE_TTL = 60 * 60 * 1000; // 1 hour
 const fetchLiveRates = async () => {
   const rates = {};
 
+  // 1. Fetch Crypto & Gold from CoinGecko
   try {
-    // 1. Fetch Crypto & Gold from CoinGecko
-    // pax-gold is quoted per Troy Ounce
     const cgResponse = await axios.get(
       'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,tether,pax-gold&vs_currencies=idr'
     );
@@ -19,31 +18,30 @@ const fetchLiveRates = async () => {
       if (cgResponse.data.bitcoin?.idr) rates.BTC = cgResponse.data.bitcoin.idr;
       if (cgResponse.data.ethereum?.idr) rates.ETH = cgResponse.data.ethereum.idr;
       if (cgResponse.data.tether?.idr) rates.USDT = cgResponse.data.tether.idr;
-      // Gold is priced per Troy Ounce in IDR
       if (cgResponse.data['pax-gold']?.idr) rates.XAU_TROY_OUNCE = cgResponse.data['pax-gold'].idr;
     }
+  } catch (error) {
+    console.error('Error fetching crypto rates from CoinGecko:', error.message);
+  }
 
-    // 2. Fetch Fiat from Frankfurter (using USD as base, then converting if needed, 
-    // or just fetch IDR against USD, EUR, SGD)
-    // Frankfurter base=USD
+  // 2. Fetch Fiat from Frankfurter
+  try {
     const fiatResponse = await axios.get('https://api.frankfurter.app/latest?from=USD&to=IDR,EUR,SGD');
     
     if (fiatResponse.data && fiatResponse.data.rates) {
       const usdToIdr = fiatResponse.data.rates.IDR;
       rates.USD = usdToIdr;
       
-      // Calculate EUR to IDR: (1 EUR / USD_rate) * IDR_rate
       if (fiatResponse.data.rates.EUR) {
         rates.EUR = usdToIdr / fiatResponse.data.rates.EUR;
       }
       
-      // Calculate SGD to IDR
       if (fiatResponse.data.rates.SGD) {
         rates.SGD = usdToIdr / fiatResponse.data.rates.SGD;
       }
     }
   } catch (error) {
-    console.error('Error fetching live rates:', error.message);
+    console.error('Error fetching fiat rates from Frankfurter:', error.message);
   }
 
   // Base IDR is always 1

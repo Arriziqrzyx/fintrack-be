@@ -1,28 +1,32 @@
 const transactionRepository = require('../repositories/transactionRepository');
-const Account = require('../models/Account');
-const Category = require('../models/Category');
-const Fund = require('../models/Fund');
-const FundTransaction = require('../models/FundTransaction');
-const User = require('../models/User');
+const accountRepository = require('../repositories/accountRepository');
+const categoryRepository = require('../repositories/categoryRepository');
+const fundRepository = require('../repositories/fundRepository');
+const userRepository = require('../repositories/userRepository');
+const Transaction = require('../models/Transaction');
+const SalaryCycle = require('../models/SalaryCycle'); // Mapped via service or direct model if required
 const mongoose = require('mongoose');
 const { getAvailableBalance } = require('./fundService');
 const salaryCycleService = require('./salaryCycleService');
-const SalaryCycle = require('../models/SalaryCycle');
+const AppError = require('../utils/AppError');
+const { isAllocatableAccount } = require('../utils/accountUtils');
+const exchangeRateService = require('./exchangeRateService');
 
 const handleAutoAllocation = async (transaction, category) => {
-  await FundTransaction.deleteMany({ sourceTransactionId: transaction._id });
+  await fundRepository.deleteTransactionsBySourceId(transaction._id);
   if (transaction.type !== 'INCOME' || !category) return;
   const catName = category.name.toLowerCase();
   if (!catName.includes('gaji') && !catName.includes('honorium')) return;
 
-  const activeFunds = await Fund.find({ userId: transaction.userId, status: { $ne: 'ARCHIVED' } });
+  const activeFunds = await fundRepository.findActiveFundsByUserId(transaction.userId);
   if (activeFunds.length === 0) return;
 
-  const user = await User.findById(transaction.userId);
+  const user = await userRepository.findById(transaction.userId);
   const autoAllocationPercentage = user?.autoAllocationPercentage || 35;
   if (autoAllocationPercentage <= 0) return;
 
-  const totalAllocation = transaction.amount * (autoAllocationPercentage / 100);
+  const idrAmount = transaction.amount * (transaction.conversionRate || 1);
+  const totalAllocation = idrAmount * (autoAllocationPercentage / 100);
   const rawPerFund = totalAllocation / activeFunds.length;
   const roundedPerFund = Math.floor(rawPerFund / 1000) * 1000;
 
@@ -37,7 +41,63 @@ const handleAutoAllocation = async (transaction, category) => {
     sourceTransactionId: transaction._id
   }));
 
-  await FundTransaction.insertMany(allocations);
+  await fundRepository.insertTransactions(allocations);
+};
+
+const calculateBalanceBefore = async (transaction) => {
+  const accountId = transaction.accountId._id || transaction.accountId;
+  const account = await accountRepository.findByIdAndUser(accountId, transaction.userId);
+  if (!account) return 0;
+
+  // Get all transactions for this account before this transaction's date/creation
+  const transactions = await Transaction.find({
+    userId: transaction.userId,
+    $or: [
+      { accountId },
+      { transferAccountId: accountId }
+    ],
+    $or: [
+      { transactionDate: { $lt: transaction.transactionDate } },
+      { 
+        transactionDate: transaction.transactionDate,
+        createdAt: { $lt: transaction.createdAt }
+      }
+    ]
+  });
+
+  let balance = account.initialBalance;
+  for (const tx of transactions) {
+    if (tx.accountId.toString() === accountId.toString()) {
+      switch (tx.type) {
+        case 'INCOME':
+          balance += tx.amount;
+          break;
+        case 'EXPENSE':
+          balance -= tx.amount;
+          break;
+        case 'TRANSFER':
+        case 'CONVERSION':
+          const fee = (tx.adminFeeAccount === 'SOURCE') ? (tx.adminFee || 0) : 0;
+          balance -= (tx.amount + fee);
+          break;
+        case 'ADJUSTMENT':
+          balance += tx.amount;
+          break;
+      }
+    } else if (tx.transferAccountId && tx.transferAccountId.toString() === accountId.toString()) {
+      switch (tx.type) {
+        case 'TRANSFER':
+          const feeDestT = (tx.adminFeeAccount === 'DESTINATION') ? (tx.adminFee || 0) : 0;
+          balance += (tx.amount - feeDestT);
+          break;
+        case 'CONVERSION':
+          const feeDestC = (tx.adminFeeAccount === 'DESTINATION') ? (tx.adminFee || 0) : 0;
+          balance += ((tx.destinationAmount || tx.amount) - feeDestC);
+          break;
+      }
+    }
+  }
+  return balance;
 };
 
 const getTransactions = async (userId, filters) => {
@@ -47,19 +107,26 @@ const getTransactions = async (userId, filters) => {
   if (type) query.type = type;
   if (startDate || endDate) {
     query.transactionDate = {};
-    if (startDate) query.transactionDate.$gte = new Date(startDate);
-    if (endDate) query.transactionDate.$lte = new Date(endDate);
+    if (startDate) {
+      const startD = (typeof startDate === 'string' && startDate.length === 10)
+        ? new Date(`${startDate}T00:00:00.000+07:00`)
+        : new Date(startDate);
+      query.transactionDate.$gte = startD;
+    }
+    if (endDate) {
+      const endD = (typeof endDate === 'string' && endDate.length === 10)
+        ? new Date(`${endDate}T23:59:59.999+07:00`)
+        : new Date(endDate);
+      query.transactionDate.$lte = endD;
+    }
   }
   
   if (search) {
-    const matchingCategories = await Category.find({
-      $or: [
-        { userId },
-        { isDefault: true } // Include default categories in search
-      ],
-      name: { $regex: search, $options: 'i' }
-    });
-    const categoryIds = matchingCategories.map(c => c._id);
+    // Keep category query in repository or service. categoryRepository handles query.
+    // Category list can be fetched via Mongoose query but scoped.
+    const matchingCategories = await categoryRepository.findByUserId(userId);
+    const filteredMatch = matchingCategories.filter(c => c.name.toLowerCase().includes(search.toLowerCase()));
+    const categoryIds = filteredMatch.map(c => c._id);
 
     query.$or = [
       { note: { $regex: search, $options: 'i' } },
@@ -78,14 +145,24 @@ const getTransactions = async (userId, filters) => {
   }
 
   const pageNum = parseInt(page, 10) || 1;
-  const limitNum = parseInt(limit, 10) || 0; // 0 means no limit initially, but we can set a default
+  const limitNum = parseInt(limit, 10) || 0; // 0 means no limit initially
   const skipNum = limitNum > 0 ? (pageNum - 1) * limitNum : 0;
 
   const transactions = await transactionRepository.getTransactions(query, skipNum, limitNum, sort);
   const total = await transactionRepository.countTransactions(query);
 
+  const transactionsWithBalanceBefore = await Promise.all(
+    transactions.map(async (tx) => {
+      const txObj = tx.toObject();
+      if (txObj.type === 'CONVERSION') {
+        txObj.balanceBefore = await calculateBalanceBefore(tx);
+      }
+      return txObj;
+    })
+  );
+
   return {
-    transactions,
+    transactions: transactionsWithBalanceBefore,
     total,
     page: pageNum,
     limit: limitNum,
@@ -96,35 +173,101 @@ const getTransactions = async (userId, filters) => {
 const getTransactionById = async (id, userId) => {
   const transaction = await transactionRepository.getTransactionByIdAndUser(id, userId);
   if (!transaction) {
-    throw new Error('Transaction not found');
+    throw new AppError('Transaction not found', 404);
   }
-  return transaction;
+  
+  const txObj = transaction.toObject();
+  if (txObj.type === 'CONVERSION') {
+    txObj.balanceBefore = await calculateBalanceBefore(transaction);
+  }
+  return txObj;
 };
 
 const createTransaction = async (userId, data) => {
   const { accountId, type, amount, adminFee, adminFeeAccount, categoryId, note, transferAccountId, transactionDate, isPrimarySalary } = data;
   if (!accountId || !type || amount === undefined || !transactionDate) {
-    throw new Error('Missing required fields');
+    throw new AppError('Missing required fields', 400);
   }
 
-  const account = await Account.findOne({ _id: accountId, userId });
-  if (!account) throw new Error('Account not found');
+  const account = await accountRepository.findByIdAndUser(accountId, userId);
+  if (!account) throw new AppError('Account not found', 404);
 
   if (type === 'TRANSFER') {
-    if (!transferAccountId) throw new Error('Transfer account is required for transfers');
-    const transferAcc = await Account.findOne({ _id: transferAccountId, userId });
-    if (!transferAcc) throw new Error('Transfer target account not found');
+    if (!transferAccountId) throw new AppError('Transfer account is required for transfers', 400);
+    const transferAcc = await accountRepository.findByIdAndUser(transferAccountId, userId);
+    if (!transferAcc) throw new AppError('Transfer target account not found', 404);
   } else if (type === 'INCOME' || type === 'EXPENSE') {
-    if (!categoryId) throw new Error('Category is required for income/expense');
-    const category = await Category.findOne({ _id: categoryId, userId });
-    if (!category) throw new Error('Category not found');
+    if (!categoryId) throw new AppError('Category is required for income/expense', 400);
+    const category = await categoryRepository.findByIdAndUser(categoryId, userId);
+    if (!category) throw new AppError('Category not found', 404);
     
-    if (type === 'EXPENSE') {
+    if (type === 'EXPENSE' && isAllocatableAccount(account)) {
       const availableBalance = await getAvailableBalance(new mongoose.Types.ObjectId(userId));
       if (amount > availableBalance) {
-        throw new Error('Insufficient Available Balance');
+        throw new AppError('Insufficient Available Balance', 400);
       }
     }
+  }
+
+  const baseCurrency = process.env.BASE_CURRENCY || 'IDR';
+  const rates = await exchangeRateService.getExchangeRates();
+  
+  const getRateToBase = (assetCode) => {
+    const assetRateInIDR = rates[assetCode] || 1;
+    const baseRateInIDR = rates[baseCurrency] || 1;
+    return assetRateInIDR / baseRateInIDR;
+  };
+
+  let conversionRate = 1;
+  if (account.assetClass === 'METAL' && account.unit === 'GRAM') {
+    const troyOunceRateInIDR = rates['XAU_TROY_OUNCE'] || 0;
+    const baseRateInIDR = rates[baseCurrency] || 1;
+    conversionRate = (troyOunceRateInIDR / 31.1034768) / baseRateInIDR;
+  } else {
+    conversionRate = getRateToBase(account.assetCode);
+  }
+
+  if (!conversionRate || isNaN(conversionRate)) {
+    throw new AppError('Unable to determine conversion rate. Transaction creation aborted.', 500);
+  }
+
+  const baseAmount = amount * conversionRate;
+  const adminFeeBaseAmount = (adminFee || 0) * conversionRate;
+  const adminFeeCurrency = account.assetCode;
+
+  const tDate = transactionDate ? new Date(transactionDate) : new Date();
+  
+  // Calculate balances snapshots
+  const balanceBefore = await calculateBalanceBefore({
+    accountId,
+    userId,
+    transactionDate: tDate,
+    createdAt: new Date()
+  });
+
+  let balanceAfter = balanceBefore;
+  if (type === 'INCOME') {
+    balanceAfter = balanceBefore + amount;
+  } else if (type === 'EXPENSE') {
+    balanceAfter = balanceBefore - amount;
+  } else if (type === 'ADJUSTMENT') {
+    balanceAfter = balanceBefore + amount;
+  } else if (type === 'TRANSFER') {
+    const fee = (adminFeeAccount === 'SOURCE') ? (adminFee || 0) : 0;
+    balanceAfter = balanceBefore - (amount + fee);
+  }
+
+  let destBalanceBefore = null;
+  let destBalanceAfter = null;
+  if (type === 'TRANSFER') {
+    destBalanceBefore = await calculateBalanceBefore({
+      accountId: transferAccountId,
+      userId,
+      transactionDate: tDate,
+      createdAt: new Date()
+    });
+    const feeDest = (adminFeeAccount === 'DESTINATION') ? (adminFee || 0) : 0;
+    destBalanceAfter = destBalanceBefore + (amount - feeDest);
   }
 
   const transaction = await transactionRepository.create({
@@ -132,14 +275,32 @@ const createTransaction = async (userId, data) => {
     accountId,
     type,
     amount,
+    conversionRate,
     adminFee: adminFee || 0,
     adminFeeAccount: adminFeeAccount || 'SOURCE',
     assetCode: account.assetCode,
     categoryId: type === 'TRANSFER' || type === 'ADJUSTMENT' ? null : categoryId,
     note,
     transferAccountId: type === 'TRANSFER' ? transferAccountId : null,
-    transactionDate: new Date(transactionDate),
-    isPrimarySalary: isPrimarySalary || false
+    transactionDate: tDate,
+    isPrimarySalary: isPrimarySalary || false,
+    
+    // Snapshots values
+    baseCurrency,
+    baseAmount,
+    exchangeRateSnapshot: {
+      fromCurrency: account.assetCode,
+      toCurrency: baseCurrency,
+      exchangeRate: conversionRate,
+      exchangeRateSource: 'Live Rate API',
+      exchangeRateTimestamp: new Date()
+    },
+    adminFeeCurrency,
+    adminFeeBaseAmount,
+    balanceBefore,
+    balanceAfter,
+    destBalanceBefore,
+    destBalanceAfter
   });
 
   // Determine and set salaryCycleId for non-primary transactions
@@ -156,7 +317,7 @@ const createTransaction = async (userId, data) => {
   }
 
   if (transaction.type === 'INCOME' && transaction.categoryId) {
-    const cat = await Category.findById(transaction.categoryId);
+    const cat = await categoryRepository.findByIdAndUser(transaction.categoryId, userId);
     await handleAutoAllocation(transaction, cat);
   }
 
@@ -170,12 +331,28 @@ const createTransaction = async (userId, data) => {
 const updateTransaction = async (id, userId, data) => {
   const { accountId, type, amount, adminFee, adminFeeAccount, categoryId, note, transferAccountId, transactionDate, isPrimarySalary } = data;
   const transaction = await transactionRepository.getTransactionByIdAndUser(id, userId);
-  if (!transaction) throw new Error('Transaction not found');
+  if (!transaction) throw new AppError('Transaction not found', 404);
 
   // Track if this was primary BEFORE the update
   const wasPrimary = transaction.isPrimarySalary === true;
 
-  if (accountId) transaction.accountId = accountId;
+  if (accountId) {
+    transaction.accountId = accountId;
+    const account = await accountRepository.findByIdAndUser(accountId, userId);
+    if (!account) throw new AppError('Account not found', 404);
+    transaction.assetCode = account.assetCode;
+    
+    // Recalculate historical conversion rate
+    const rates = await exchangeRateService.getExchangeRates();
+    let conversionRate = 1;
+    if (account.assetClass === 'METAL' && account.unit === 'GRAM') {
+      const troyOunceRate = rates['XAU_TROY_OUNCE'] || 0;
+      conversionRate = troyOunceRate / 31.1034768;
+    } else {
+      conversionRate = rates[account.assetCode] || 1;
+    }
+    transaction.conversionRate = conversionRate;
+  }
   if (type) transaction.type = type;
   if (amount !== undefined) transaction.amount = amount;
   if (adminFee !== undefined) transaction.adminFee = adminFee;
@@ -208,10 +385,10 @@ const updateTransaction = async (id, userId, data) => {
   const updatedTransaction = await transactionRepository.update(transaction);
 
   if (updatedTransaction.type === 'INCOME' && updatedTransaction.categoryId) {
-    const cat = await Category.findById(updatedTransaction.categoryId);
+    const cat = await categoryRepository.findByIdAndUser(updatedTransaction.categoryId, userId);
     await handleAutoAllocation(updatedTransaction, cat);
   } else {
-    await FundTransaction.deleteMany({ sourceTransactionId: updatedTransaction._id });
+    await fundRepository.deleteTransactionsBySourceId(updatedTransaction._id);
   }
 
   // Only rebuild cycles if:
@@ -227,8 +404,8 @@ const updateTransaction = async (id, userId, data) => {
 
 const deleteTransaction = async (id, userId) => {
   const transaction = await transactionRepository.deleteByIdAndUser(id, userId);
-  if (!transaction) throw new Error('Transaction not found');
-  await FundTransaction.deleteMany({ sourceTransactionId: transaction._id });
+  if (!transaction) throw new AppError('Transaction not found', 404);
+  await fundRepository.deleteTransactionsBySourceId(transaction._id);
   
   if (transaction.isPrimarySalary) {
     await salaryCycleService.rebuildUserCycles(userId);
@@ -241,23 +418,51 @@ const createConversion = async (userId, data) => {
   const { accountId, transferAccountId, amount, destinationAmount, conversionRate, adminFee, adminFeeAccount, note, transactionDate } = data;
   
   if (!accountId || !transferAccountId || !amount || !destinationAmount || !conversionRate) {
-    throw new Error('Missing required conversion fields');
+    throw new AppError('Missing required conversion fields', 400);
   }
 
-  const assetAccount = await Account.findOne({ _id: accountId, userId });
-  const liquidAccount = await Account.findOne({ _id: transferAccountId, userId });
+  const assetAccount = await accountRepository.findByIdAndUser(accountId, userId);
+  const liquidAccount = await accountRepository.findByIdAndUser(transferAccountId, userId);
 
   if (!assetAccount || !liquidAccount) {
-    throw new Error('One or both accounts not found');
+    throw new AppError('One or both accounts not found', 404);
   }
 
-  // Ensure they have enough asset
-  if (assetAccount.currentBalance !== undefined && amount > assetAccount.currentBalance) {
-    // Note: Since currentBalance is dynamic, we'd ideally fetch it using accountService,
-    // but the model here doesn't have currentBalance directly. We'll skip strict validation here 
-    // or assume the caller validated, to keep it simple, or we could just let them go negative if they override.
-    // Let's trust the frontend validation for now.
-  }
+  const baseCurrency = process.env.BASE_CURRENCY || 'IDR';
+  const rates = await exchangeRateService.getExchangeRates();
+  
+  // Rate from source assetAccount to baseCurrency
+  const sourceRateToBase = (rates[assetAccount.assetCode] || 1) / (rates[baseCurrency] || 1);
+  
+  // Rate from dest liquidAccount to baseCurrency
+  const destRateToBase = (rates[liquidAccount.assetCode] || 1) / (rates[baseCurrency] || 1);
+  
+  const baseAmount = amount * sourceRateToBase;
+  
+  const adminFeeCurrency = adminFeeAccount === 'SOURCE' ? assetAccount.assetCode : liquidAccount.assetCode;
+  const adminFeeRateToBase = adminFeeAccount === 'SOURCE' ? sourceRateToBase : destRateToBase;
+  const adminFeeBaseAmount = (adminFee || 0) * adminFeeRateToBase;
+
+  const tDate = transactionDate ? new Date(transactionDate) : new Date();
+
+  // Balance snapshots
+  const balanceBefore = await calculateBalanceBefore({
+    accountId,
+    userId,
+    transactionDate: tDate,
+    createdAt: new Date()
+  });
+  const feeSource = (adminFeeAccount === 'SOURCE') ? (adminFee || 0) : 0;
+  const balanceAfter = balanceBefore - (amount + feeSource);
+
+  const destBalanceBefore = await calculateBalanceBefore({
+    accountId: transferAccountId,
+    userId,
+    transactionDate: tDate,
+    createdAt: new Date()
+  });
+  const feeDest = (adminFeeAccount === 'DESTINATION') ? (adminFee || 0) : 0;
+  const destBalanceAfter = destBalanceBefore + (destinationAmount - feeDest);
 
   const transaction = await transactionRepository.create({
     userId,
@@ -272,7 +477,24 @@ const createConversion = async (userId, data) => {
     categoryId: null,
     note: note || `Converted ${amount} ${assetAccount.assetCode} to ${liquidAccount.assetCode}`,
     transferAccountId,
-    transactionDate: transactionDate ? new Date(transactionDate) : new Date()
+    transactionDate: tDate,
+
+    // Snapshots values
+    baseCurrency,
+    baseAmount,
+    exchangeRateSnapshot: {
+      fromCurrency: assetAccount.assetCode,
+      toCurrency: liquidAccount.assetCode,
+      exchangeRate: conversionRate,
+      exchangeRateSource: 'User input rate',
+      exchangeRateTimestamp: new Date()
+    },
+    adminFeeCurrency,
+    adminFeeBaseAmount,
+    balanceBefore,
+    balanceAfter,
+    destBalanceBefore,
+    destBalanceAfter
   });
 
   return transaction;

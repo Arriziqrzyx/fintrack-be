@@ -1,5 +1,6 @@
 const reportRepository = require('../repositories/reportRepository');
 const salaryCycleService = require('./salaryCycleService');
+const AppError = require('../utils/AppError');
 
 const getJakartaMonthRange = (year, month) => {
   const startDateStr = `${year}-${String(month).padStart(2, '0')}-01T00:00:00.000+07:00`;
@@ -95,7 +96,7 @@ const getYearlyReport = async (userId, year) => {
 
 const getCycleReport = async (userId, cycleId) => {
   const cycle = await salaryCycleService.getCycleById(cycleId, userId);
-  if (!cycle) throw new Error('Cycle not found');
+  if (!cycle) throw new AppError('Cycle not found', 404);
 
   const startDate = cycle.startDate;
   const endDate = cycle.endDate || new Date(9999, 11, 31); // far future if active

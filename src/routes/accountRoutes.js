@@ -9,6 +9,8 @@ const {
   adjustBalance
 } = require('../controllers/accountController');
 const { authenticate } = require('../middleware/auth');
+const { validateBody } = require('../middleware/validationMiddleware');
+const { createAccountSchema, updateAccountSchema, adjustBalanceSchema } = require('../validators/accountSchemas');
 
 // Protect all account routes
 router.use(authenticate);
@@ -16,13 +18,13 @@ router.use(authenticate);
 // Routes for /api/accounts
 router.route('/')
   .get(getAccounts)
-  .post(createAccount);
+  .post(validateBody(createAccountSchema), createAccount);
 
 router.route('/:id')
   .get(getAccountById)
-  .put(updateAccount)
+  .put(validateBody(updateAccountSchema), updateAccount)
   .delete(deleteAccount);
 
-router.post('/:id/adjust-balance', adjustBalance);
+router.post('/:id/adjust-balance', validateBody(adjustBalanceSchema), adjustBalance);
 
 module.exports = router;
