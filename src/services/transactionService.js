@@ -1,4 +1,6 @@
 const transactionRepository = require('../repositories/transactionRepository');
+const pushNotifierService = require('./pushNotifierService');
+
 const accountRepository = require('../repositories/accountRepository');
 const categoryRepository = require('../repositories/categoryRepository');
 const fundRepository = require('../repositories/fundRepository');
@@ -324,6 +326,11 @@ const createTransaction = async (userId, data) => {
   if (transaction.isPrimarySalary) {
     await salaryCycleService.rebuildUserCycles(userId);
   }
+
+  // Trigger contextual PWA notification checks (non-blocking)
+  pushNotifierService.checkTransactionAlerts(userId, transaction).catch(err => {
+    console.error('[TransactionService] Failed to run transaction alerts:', err);
+  });
 
   return transaction;
 };

@@ -131,6 +131,8 @@ app.use('/api/funds', require('./routes/fundRoutes'));
 app.use('/api/reports', require('./routes/reportRoutes'));
 app.use('/api/salary-cycles', require('./routes/salaryCycleRoutes'));
 app.use('/api/ai', require('./routes/aiRoutes'));
+app.use('/api/notifications', require('./routes/notificationRoutes'));
+
 
 app.get("/", (req, res) => {
   res.send("Fintrack API is running...");
@@ -179,4 +181,5 @@ app.use((err, req, res, next) => {
 
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
+  require('./utils/scheduler').startSchedulers();
 });
