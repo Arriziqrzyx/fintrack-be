@@ -107,6 +107,22 @@ const toolSchemas = [
   {
     type: 'function',
     function: {
+      name: 'send_test_push_notification',
+      description: "Send a test push notification to the user's subscribed devices. Bypasses typical limits like daily cooldown. Requires correct developer password ('Dearijik').",
+      parameters: {
+        type: 'object',
+        properties: {
+          title: { type: 'string', description: 'The title of the push notification' },
+          description: { type: 'string', description: 'The body content of the push notification' },
+          password: { type: 'string', description: 'Developer password required to execute the test (must be "Dearijik")' }
+        },
+        required: ['title', 'description', 'password']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
       name: 'get_current_balance',
       description: 'Get the total liquid balance (available money) and asset value for the user. Use for quick balance checks.',
       parameters: { type: 'object', properties: {} }
@@ -1672,6 +1688,86 @@ const executeTool = async (functionName, args, userId) => {
         settings: {
           autoAllocationPercentage: user.autoAllocationPercentage
         }
+      };
+    }
+
+    case 'send_test_push_notification':
+    {
+      const { title, description, password } = args;
+      if (password !== 'Dearijik') {
+        return { success: false, error: 'Password pengembang tidak valid!' };
+      }
+
+      const user = await User.findById(userId);
+      if (!user) return { error: 'User not found' };
+
+      const subscriptions = user.pushSubscriptions || [];
+      if (subscriptions.length === 0) {
+        return {
+          success: false,
+          error: 'Kamu belum mengaktifkan Push Notification di perangkat ini. Aktifkan dulu di menu Profile / Settings!'
+        };
+      }
+
+      const webpush = require('web-push');
+      const publicKey = process.env.VAPID_PUBLIC_KEY;
+      const privateKey = process.env.VAPID_PRIVATE_KEY;
+      if (!publicKey || !privateKey) {
+        return { success: false, error: 'Kunci VAPID belum dikonfigurasi di server (.env).' };
+      }
+
+      webpush.setVapidDetails(
+        'mailto:support@fintrack.com',
+        publicKey,
+        privateKey
+      );
+
+      let successCount = 0;
+      let failCount = 0;
+      let activeSubs = [...subscriptions];
+      let isPruned = false;
+
+      for (const sub of subscriptions) {
+        try {
+          await webpush.sendNotification(
+            {
+              endpoint: sub.endpoint,
+              keys: {
+                p256dh: sub.keys.p256dh,
+                auth: sub.keys.auth
+              }
+            },
+            JSON.stringify({
+              title: title || 'Test Notif',
+              body: description || 'Ini adalah push notif uji coba'
+            })
+          );
+          successCount++;
+        } catch (err) {
+          console.error(`[PushService Test] Failed:`, err.message);
+          failCount++;
+          if (err.statusCode === 410 || err.statusCode === 404) {
+            activeSubs = activeSubs.filter(s => s.endpoint !== sub.endpoint);
+            isPruned = true;
+          }
+        }
+      }
+
+      if (isPruned) {
+        user.pushSubscriptions = activeSubs;
+        await user.save();
+      }
+
+      if (successCount === 0) {
+        return {
+          success: false,
+          error: 'Gagal mengirim push notification ke perangkat terdaftar. Pastikan izin notifikasi aktif.'
+        };
+      }
+
+      return {
+        success: true,
+        message: `Berhasil mengirim test push notification ke ${successCount} perangkat terdaftar (Gagal: ${failCount}) tanpa batasan cooldown!`
       };
     }
 
