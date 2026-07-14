@@ -1694,7 +1694,8 @@ const executeTool = async (functionName, args, userId) => {
     case 'send_test_push_notification':
     {
       const { title, description, password } = args;
-      if (password !== 'Dearijik') {
+      const expectedPassword = process.env.DEVELOPER_PUSH_PASSWORD || 'Dearijik';
+      if (!password || password !== expectedPassword) {
         return { success: false, error: 'Password pengembang tidak valid!' };
       }
 

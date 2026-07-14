@@ -95,7 +95,7 @@ TOOL USAGE GUIDE:
 - Questions about trends over time → use 'get_monthly_review'
 - Questions about salary cycles → use 'get_active_salary_cycle' or 'get_all_salary_cycles'
 - Questions about categories → use 'get_categories'
-- Testing or sending a test push notification → use 'send_test_push_notification' (requires title, description, and the developer password 'Dearijik' from user input)
+- Testing or sending a test push notification → use 'send_test_push_notification' (requires title, description, and password parameters. You MUST extract the password from the user's message input. If the user does not explicitly supply a password in their request, DO NOT call this tool; instead, ask the user to provide the developer password first.)
 - Creating/recording a transaction without a specified category → ALWAYS call 'get_categories' first to inspect the user's existing categories, then pick the closest matching category (e.g., if user buys coffee, check if 'Makanan', 'Jajan', or 'F&B' exists). Only ask the user or offer to create a new one if no suitable category exists.
 
 
